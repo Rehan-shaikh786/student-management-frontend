@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
     BookOpen,
     ClipboardList,
@@ -6,6 +6,7 @@ import {
     Search,
     Trash2,
     UserRound,
+    AlertTriangle,
 } from "lucide-react";
 
 import api from "../services/api";
@@ -27,7 +28,14 @@ const Enrollments = () => {
     const [searchTerm, setSearchTerm] = useState("");
 
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isDeleteModalOpen, setIsDeleteModalOpen] =
+        useState(false);
+
+    const [selectedEnrollment, setSelectedEnrollment] =
+        useState(null);
+
     const [saving, setSaving] = useState(false);
+    const [deleting, setDeleting] = useState(false);
 
     const [formData, setFormData] = useState({
         studentId: "",
@@ -39,22 +47,216 @@ const Enrollments = () => {
         type: "success",
     });
 
+    // =========================================================
+    // TOAST
+    // =========================================================
+
     const showToast = (message, type = "success") => {
         setToast({
             message,
             type,
         });
-
-        setTimeout(() => {
-            setToast({
-                message: "",
-                type: "success",
-            });
-        }, 3000);
     };
 
-    const fetchEnrollmentData = async () => {
+    const closeToast = useCallback(() => {
+        setToast({
+            message: "",
+            type: "success",
+        });
+    }, []);
+
+    // =========================================================
+    // HELPER FUNCTIONS
+    // =========================================================
+
+    const getEnrollmentId = (enrollment) => {
+        return (
+            enrollment?.id ||
+            enrollment?.enrollmentId ||
+            enrollment?._id
+        );
+    };
+
+    const getStudentId = (enrollment) => {
+        if (enrollment?.student?.id) {
+            return enrollment.student.id;
+        }
+
+        if (enrollment?.studentId) {
+            return enrollment.studentId;
+        }
+
+        return null;
+    };
+
+    const getCourseId = (enrollment) => {
+        if (enrollment?.course?.id) {
+            return enrollment.course.id;
+        }
+
+        if (enrollment?.courseId) {
+            return enrollment.courseId;
+        }
+
+        return null;
+    };
+
+    const getStudentName = (enrollment) => {
+        if (enrollment?.student?.name) {
+            return enrollment.student.name;
+        }
+
+        const studentId = getStudentId(enrollment);
+
+        const student = students.find(
+            (item) =>
+                String(item.id) === String(studentId)
+        );
+
+        return student?.name || "Unknown Student";
+    };
+
+    const getStudentEmail = (enrollment) => {
+        if (enrollment?.student?.email) {
+            return enrollment.student.email;
+        }
+
+        const studentId = getStudentId(enrollment);
+
+        const student = students.find(
+            (item) =>
+                String(item.id) === String(studentId)
+        );
+
+        return student?.email || "";
+    };
+
+    const getCourseName = (enrollment) => {
+        if (enrollment?.course?.courseName) {
+            return enrollment.course.courseName;
+        }
+
+        if (enrollment?.courseName) {
+            return enrollment.courseName;
+        }
+
+        const courseId = getCourseId(enrollment);
+
+        const course = courses.find(
+            (item) =>
+                String(item.id) === String(courseId)
+        );
+
+        return course?.courseName || "Unknown Course";
+    };
+
+    const getCourseCode = (enrollment) => {
+        if (enrollment?.course?.courseCode) {
+            return enrollment.course.courseCode;
+        }
+
+        if (enrollment?.courseCode) {
+            return enrollment.courseCode;
+        }
+
+        const courseId = getCourseId(enrollment);
+
+        const course = courses.find(
+            (item) =>
+                String(item.id) === String(courseId)
+        );
+
+        return course?.courseCode || "";
+    };
+
+    // =========================================================
+    // INITIAL LOAD
+    // =========================================================
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadInitialData = async () => {
+            try {
+                const [
+                    enrollmentsResponse,
+                    studentsResponse,
+                    coursesResponse,
+                ] = await Promise.all([
+                    api.get("/enrollments"),
+                    api.get("/students"),
+                    api.get("/courses"),
+                ]);
+
+                if (cancelled) return;
+
+                setEnrollments(
+                    Array.isArray(enrollmentsResponse.data)
+                        ? enrollmentsResponse.data
+                        : []
+                );
+
+                setStudents(
+                    Array.isArray(studentsResponse.data)
+                        ? studentsResponse.data
+                        : []
+                );
+
+                setCourses(
+                    Array.isArray(coursesResponse.data)
+                        ? coursesResponse.data
+                        : []
+                );
+
+                setError("");
+            } catch (requestError) {
+                if (cancelled) return;
+
+                console.error(
+                    "Enrollment loading error:",
+                    requestError
+                );
+
+                setError(
+                    requestError.response?.data?.message ||
+                    "Unable to load enrollment data."
+                );
+            } finally {
+                if (!cancelled) {
+                    setLoading(false);
+                }
+            }
+        };
+
+        loadInitialData().catch((unexpectedError) => {
+            if (cancelled) return;
+
+            console.error(
+                "Unexpected enrollment loading error:",
+                unexpectedError
+            );
+
+            setError(
+                "Unable to load enrollment data."
+            );
+
+            setLoading(false);
+        });
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    // =========================================================
+    // REFRESH DATA
+    // =========================================================
+
+    const loadData = async () => {
         try {
+            setLoading(true);
+            setError("");
+
             const [
                 enrollmentsResponse,
                 studentsResponse,
@@ -65,77 +267,41 @@ const Enrollments = () => {
                 api.get("/courses"),
             ]);
 
-            return {
-                success: true,
-                enrollments: Array.isArray(
-                    enrollmentsResponse.data
-                )
+            setEnrollments(
+                Array.isArray(enrollmentsResponse.data)
                     ? enrollmentsResponse.data
-                    : [],
-                students: Array.isArray(studentsResponse.data)
+                    : []
+            );
+
+            setStudents(
+                Array.isArray(studentsResponse.data)
                     ? studentsResponse.data
-                    : [],
-                courses: Array.isArray(coursesResponse.data)
+                    : []
+            );
+
+            setCourses(
+                Array.isArray(coursesResponse.data)
                     ? coursesResponse.data
-                    : [],
-            };
+                    : []
+            );
         } catch (requestError) {
             console.error(
-                "Enrollment loading error:",
+                "Enrollment refresh error:",
                 requestError
             );
 
-            return {
-                success: false,
-                enrollments: [],
-                students: [],
-                courses: [],
-                message:
-                    requestError.response?.data?.message ||
-                    "Unable to load enrollment data.",
-            };
-        }
-    };
-
-    useEffect(() => {
-        let mounted = true;
-
-        const initializeData = async () => {
-            const result = await fetchEnrollmentData();
-
-            if (!mounted) return;
-
-            if (result.success) {
-                setEnrollments(result.enrollments);
-                setStudents(result.students);
-                setCourses(result.courses);
-                setError("");
-            } else {
-                setError(result.message);
-            }
-
+            setError(
+                requestError.response?.data?.message ||
+                "Unable to refresh enrollment data."
+            );
+        } finally {
             setLoading(false);
-        };
-
-        initializeData();
-
-        return () => {
-            mounted = false;
-        };
-    }, []);
-
-    const loadData = async () => {
-        const result = await fetchEnrollmentData();
-
-        if (result.success) {
-            setEnrollments(result.enrollments);
-            setStudents(result.students);
-            setCourses(result.courses);
-            setError("");
-        } else {
-            setError(result.message);
         }
     };
+
+    // =========================================================
+    // ADD ENROLLMENT
+    // =========================================================
 
     const openAddModal = () => {
         setFormData({
@@ -164,102 +330,6 @@ const Enrollments = () => {
             ...previous,
             [name]: value,
         }));
-    };
-
-    const getStudentId = (enrollment) => {
-        if (enrollment.student?.id) {
-            return enrollment.student.id;
-        }
-
-        if (enrollment.studentId) {
-            return enrollment.studentId;
-        }
-
-        return null;
-    };
-
-    const getCourseId = (enrollment) => {
-        if (enrollment.course?.id) {
-            return enrollment.course.id;
-        }
-
-        if (enrollment.courseId) {
-            return enrollment.courseId;
-        }
-
-        return null;
-    };
-
-    const getEnrollmentId = (enrollment) => {
-        return (
-            enrollment.id ||
-            enrollment.enrollmentId ||
-            enrollment._id
-        );
-    };
-
-    const getStudentName = (enrollment) => {
-        if (enrollment.student?.name) {
-            return enrollment.student.name;
-        }
-
-        const studentId = getStudentId(enrollment);
-
-        const student = students.find(
-            (item) => String(item.id) === String(studentId)
-        );
-
-        return student?.name || "Unknown Student";
-    };
-
-    const getStudentEmail = (enrollment) => {
-        if (enrollment.student?.email) {
-            return enrollment.student.email;
-        }
-
-        const studentId = getStudentId(enrollment);
-
-        const student = students.find(
-            (item) => String(item.id) === String(studentId)
-        );
-
-        return student?.email || "";
-    };
-
-    const getCourseName = (enrollment) => {
-        if (enrollment.course?.courseName) {
-            return enrollment.course.courseName;
-        }
-
-        if (enrollment.courseName) {
-            return enrollment.courseName;
-        }
-
-        const courseId = getCourseId(enrollment);
-
-        const course = courses.find(
-            (item) => String(item.id) === String(courseId)
-        );
-
-        return course?.courseName || "Unknown Course";
-    };
-
-    const getCourseCode = (enrollment) => {
-        if (enrollment.course?.courseCode) {
-            return enrollment.course.courseCode;
-        }
-
-        if (enrollment.courseCode) {
-            return enrollment.courseCode;
-        }
-
-        const courseId = getCourseId(enrollment);
-
-        const course = courses.find(
-            (item) => String(item.id) === String(courseId)
-        );
-
-        return course?.courseCode || "";
     };
 
     const handleSubmit = async (event) => {
@@ -317,7 +387,11 @@ const Enrollments = () => {
         }
     };
 
-    const handleDelete = async (enrollment) => {
+    // =========================================================
+    // DELETE ENROLLMENT
+    // =========================================================
+
+    const openDeleteModal = (enrollment) => {
         const enrollmentId =
             getEnrollmentId(enrollment);
 
@@ -329,17 +403,32 @@ const Enrollments = () => {
             return;
         }
 
-        const studentName =
-            getStudentName(enrollment);
+        setSelectedEnrollment(enrollment);
+        setIsDeleteModalOpen(true);
+    };
 
-        const courseName =
-            getCourseName(enrollment);
+    const closeDeleteModal = () => {
+        if (deleting) return;
 
-        const confirmed = window.confirm(
-            `Remove ${studentName} from ${courseName}?`
-        );
+        setIsDeleteModalOpen(false);
+        setSelectedEnrollment(null);
+    };
 
-        if (!confirmed) return;
+    const handleDelete = async () => {
+        if (!selectedEnrollment) return;
+
+        const enrollmentId =
+            getEnrollmentId(selectedEnrollment);
+
+        if (!enrollmentId) {
+            showToast(
+                "Enrollment ID could not be found.",
+                "error"
+            );
+            return;
+        }
+
+        setDeleting(true);
 
         try {
             await api.delete(
@@ -359,6 +448,9 @@ const Enrollments = () => {
             showToast(
                 "Enrollment deleted successfully."
             );
+
+            setIsDeleteModalOpen(false);
+            setSelectedEnrollment(null);
         } catch (requestError) {
             console.error(
                 "Enrollment delete error:",
@@ -370,43 +462,37 @@ const Enrollments = () => {
                 "Unable to delete enrollment.",
                 "error"
             );
+        } finally {
+            setDeleting(false);
         }
     };
 
+    // =========================================================
+    // SEARCH
+    // =========================================================
+
     const filteredEnrollments =
         enrollments.filter((enrollment) => {
-            const search = searchTerm
-                .toLowerCase()
-                .trim();
+            const search =
+                searchTerm.toLowerCase().trim();
 
             if (!search) return true;
 
             const studentName =
-                getStudentName(
-                    enrollment
-                ).toLowerCase();
+                getStudentName(enrollment).toLowerCase();
 
             const studentEmail =
-                getStudentEmail(
-                    enrollment
-                ).toLowerCase();
+                getStudentEmail(enrollment).toLowerCase();
 
             const courseName =
-                getCourseName(
-                    enrollment
-                ).toLowerCase();
+                getCourseName(enrollment).toLowerCase();
 
             const courseCode =
-                getCourseCode(
-                    enrollment
-                ).toLowerCase();
+                getCourseCode(enrollment).toLowerCase();
 
-            const enrollmentId =
-                String(
-                    getEnrollmentId(
-                        enrollment
-                    ) || ""
-                ).toLowerCase();
+            const enrollmentId = String(
+                getEnrollmentId(enrollment) || ""
+            ).toLowerCase();
 
             return (
                 studentName.includes(search) ||
@@ -417,11 +503,19 @@ const Enrollments = () => {
             );
         });
 
+    // =========================================================
+    // LOADING
+    // =========================================================
+
     if (loading) {
         return (
             <Loading message="Loading enrollments..." />
         );
     }
+
+    // =========================================================
+    // PAGE
+    // =========================================================
 
     return (
         <>
@@ -464,7 +558,15 @@ const Enrollments = () => {
                     <button
                         type="button"
                         className="btn btn-secondary"
-                        onClick={loadData}
+                        onClick={() => {
+                            loadData().catch(
+                                (requestError) => {
+                                    console.error(
+                                        requestError
+                                    );
+                                }
+                            );
+                        }}
                     >
                         Retry
                     </button>
@@ -472,16 +574,20 @@ const Enrollments = () => {
             )}
 
             <div className="card">
-                <div className="table-toolbar">
+                <div
+                    className="table-toolbar"
+                    style={{
+                        padding: "20px 22px",
+                        marginBottom: 0,
+                    }}
+                >
                     <div>
                         <h2 className="card-title">
                             Enrollment List
                         </h2>
 
                         <p className="card-subtitle">
-                            {
-                                filteredEnrollments.length
-                            }{" "}
+                            {filteredEnrollments.length}{" "}
                             enrollment
                             {filteredEnrollments.length !==
                             1
@@ -510,7 +616,7 @@ const Enrollments = () => {
                 {filteredEnrollments.length ===
                 0 ? (
                     <div className="empty-state">
-                        <div className="empty-icon">
+                        <div className="empty-state-icon">
                             <ClipboardList
                                 size={30}
                             />
@@ -531,6 +637,10 @@ const Enrollments = () => {
                                 <button
                                     type="button"
                                     className="btn btn-primary"
+                                    style={{
+                                        marginTop:
+                                            "18px",
+                                    }}
                                     onClick={
                                         openAddModal
                                     }
@@ -541,7 +651,7 @@ const Enrollments = () => {
                             )}
                     </div>
                 ) : (
-                    <div className="table-wrapper">
+                    <div className="table-container">
                         <table className="data-table">
                             <thead>
                             <tr>
@@ -605,15 +715,8 @@ const Enrollments = () => {
                                             </td>
 
                                             <td>
-                                                <div
-                                                    style={{
-                                                        display: "flex",
-                                                        alignItems:
-                                                            "center",
-                                                        gap: "12px",
-                                                    }}
-                                                >
-                                                    <div className="avatar avatar-blue">
+                                                <div className="table-user">
+                                                    <div className="avatar">
                                                         <UserRound
                                                             size={
                                                                 17
@@ -621,60 +724,35 @@ const Enrollments = () => {
                                                         />
                                                     </div>
 
-                                                    <div
-                                                        style={{
-                                                            display:
-                                                                "flex",
-                                                            flexDirection:
-                                                                "column",
-                                                            gap: "4px",
-                                                        }}
-                                                    >
-                                                        <strong
-                                                            style={{
-                                                                display:
-                                                                    "block",
-                                                                lineHeight:
-                                                                    "1.3",
-                                                            }}
-                                                        >
+                                                    <div>
+                                                        <div className="table-user-name">
                                                             {
                                                                 studentName
                                                             }
-                                                        </strong>
+                                                        </div>
 
                                                         {studentEmail && (
-                                                            <span
-                                                                style={{
-                                                                    display:
-                                                                        "block",
-                                                                    color:
-                                                                        "#64748b",
-                                                                    fontSize:
-                                                                        "13px",
-                                                                    lineHeight:
-                                                                        "1.3",
-                                                                }}
-                                                            >
-                                                                    {
-                                                                        studentEmail
-                                                                    }
-                                                                </span>
+                                                            <div className="table-user-email">
+                                                                {
+                                                                    studentEmail
+                                                                }
+                                                            </div>
                                                         )}
                                                     </div>
                                                 </div>
                                             </td>
 
                                             <td>
-                                                <div
-                                                    style={{
-                                                        display: "flex",
-                                                        alignItems:
-                                                            "center",
-                                                        gap: "12px",
-                                                    }}
-                                                >
-                                                    <div className="avatar avatar-purple">
+                                                <div className="table-user">
+                                                    <div
+                                                        className="avatar"
+                                                        style={{
+                                                            background:
+                                                                "#f5f3ff",
+                                                            color:
+                                                                "#7c3aed",
+                                                        }}
+                                                    >
                                                         <BookOpen
                                                             size={
                                                                 17
@@ -682,51 +760,15 @@ const Enrollments = () => {
                                                         />
                                                     </div>
 
-                                                    <div
-                                                        style={{
-                                                            display:
-                                                                "flex",
-                                                            flexDirection:
-                                                                "column",
-                                                            gap: "4px",
-                                                        }}
-                                                    >
-                                                        <strong
-                                                            style={{
-                                                                display:
-                                                                    "block",
-                                                                lineHeight:
-                                                                    "1.3",
-                                                            }}
-                                                        >
+                                                    <div>
+                                                        <div className="table-user-name">
                                                             {
                                                                 courseName
                                                             }
-                                                        </strong>
+                                                        </div>
 
                                                         {courseCode && (
-                                                            <span
-                                                                style={{
-                                                                    display:
-                                                                        "inline-block",
-                                                                    width:
-                                                                        "fit-content",
-                                                                    padding:
-                                                                        "2px 8px",
-                                                                    borderRadius:
-                                                                        "6px",
-                                                                    background:
-                                                                        "#eef2ff",
-                                                                    color:
-                                                                        "#4f46e5",
-                                                                    fontSize:
-                                                                        "12px",
-                                                                    fontWeight:
-                                                                        "600",
-                                                                    lineHeight:
-                                                                        "1.4",
-                                                                }}
-                                                            >
+                                                            <span className="badge badge-primary">
                                                                     {
                                                                         courseCode
                                                                     }
@@ -744,7 +786,7 @@ const Enrollments = () => {
                                                             className="btn btn-icon btn-danger"
                                                             title="Delete enrollment"
                                                             onClick={() =>
-                                                                handleDelete(
+                                                                openDeleteModal(
                                                                     enrollment
                                                                 )
                                                             }
@@ -768,6 +810,10 @@ const Enrollments = () => {
                 )}
             </div>
 
+            {/* =================================================
+                ADD ENROLLMENT MODAL
+            ================================================= */}
+
             <Modal
                 isOpen={isModalOpen}
                 onClose={closeModal}
@@ -776,7 +822,10 @@ const Enrollments = () => {
             >
                 <form onSubmit={handleSubmit}>
                     <div className="form-group">
-                        <label htmlFor="studentId">
+                        <label
+                            htmlFor="studentId"
+                            className="form-label"
+                        >
                             Select Student
                         </label>
 
@@ -787,7 +836,7 @@ const Enrollments = () => {
                                 formData.studentId
                             }
                             onChange={handleChange}
-                            className="form-input"
+                            className="form-select"
                             disabled={saving}
                         >
                             <option value="">
@@ -804,11 +853,9 @@ const Enrollments = () => {
                                             student.id
                                         }
                                     >
-                                        {
-                                            student.name
-                                        }{" "}
+                                        {student.name}
                                         {student.email
-                                            ? `- ${student.email}`
+                                            ? ` - ${student.email}`
                                             : ""}
                                     </option>
                                 )
@@ -817,7 +864,10 @@ const Enrollments = () => {
                     </div>
 
                     <div className="form-group">
-                        <label htmlFor="courseId">
+                        <label
+                            htmlFor="courseId"
+                            className="form-label"
+                        >
                             Select Course
                         </label>
 
@@ -828,7 +878,7 @@ const Enrollments = () => {
                                 formData.courseId
                             }
                             onChange={handleChange}
-                            className="form-input"
+                            className="form-select"
                             disabled={saving}
                         >
                             <option value="">
@@ -877,15 +927,102 @@ const Enrollments = () => {
                 </form>
             </Modal>
 
+            {/* =================================================
+                DELETE MODAL
+            ================================================= */}
+
+            <Modal
+                isOpen={isDeleteModalOpen}
+                onClose={closeDeleteModal}
+                title="Delete Enrollment"
+                size="small"
+            >
+                <div
+                    style={{
+                        textAlign: "center",
+                        padding: "8px 0",
+                    }}
+                >
+                    <div
+                        style={{
+                            width: "54px",
+                            height: "54px",
+                            margin: "0 auto 16px",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            borderRadius: "50%",
+                            background: "#fef2f2",
+                            color: "#dc2626",
+                        }}
+                    >
+                        <AlertTriangle size={27} />
+                    </div>
+
+                    <h3
+                        style={{
+                            margin: "0 0 8px",
+                            fontSize: "17px",
+                        }}
+                    >
+                        Remove this enrollment?
+                    </h3>
+
+                    <p
+                        style={{
+                            margin: 0,
+                            color: "#667085",
+                            fontSize: "13px",
+                            lineHeight: 1.6,
+                        }}
+                    >
+                        <span>
+                            {selectedEnrollment
+                                ? getStudentName(
+                                    selectedEnrollment
+                                )
+                                : ""}
+                        </span>{" "}
+                        will be removed from{" "}
+                        <span>
+                            {selectedEnrollment
+                                ? getCourseName(
+                                    selectedEnrollment
+                                )
+                                : ""}
+                        </span>
+                        .
+                    </p>
+                </div>
+
+                <div className="modal-footer">
+                    <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={closeDeleteModal}
+                        disabled={deleting}
+                    >
+                        Cancel
+                    </button>
+
+                    <button
+                        type="button"
+                        className="btn btn-danger"
+                        onClick={handleDelete}
+                        disabled={deleting}
+                    >
+                        {deleting
+                            ? "Deleting..."
+                            : "Delete Enrollment"}
+                    </button>
+                </div>
+            </Modal>
+
+            {/* CENTERED TOAST */}
             <Toast
                 message={toast.message}
                 type={toast.type}
-                onClose={() =>
-                    setToast({
-                        message: "",
-                        type: "success",
-                    })
-                }
+                onClose={closeToast}
             />
         </>
     );

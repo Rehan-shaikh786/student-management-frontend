@@ -6,11 +6,18 @@ import {
     MapPin,
     User,
     Calendar,
+    GraduationCap,
+    Hash,
 } from "lucide-react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import {
+    Link,
+    useNavigate,
+    useParams,
+} from "react-router-dom";
 
 import api from "../services/api";
 import useAuth from "../context/useAuth";
+
 import Modal from "../components/Modal";
 import Toast from "../components/Toast";
 import Loading from "../components/Loading";
@@ -39,84 +46,99 @@ const StudentProfile = () => {
         type: "success",
     });
 
-    const showToast = (message, type = "success") => {
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadStudent = async () => {
+            if (!id) {
+                if (!cancelled) {
+                    setError("Invalid student ID.");
+                    setLoading(false);
+                }
+
+                return;
+            }
+
+            try {
+                setError("");
+
+                const response = await api.get(
+                    `/students/${id}`
+                );
+
+                if (cancelled) {
+                    return;
+                }
+
+                const studentData = response.data;
+
+                setStudent(studentData);
+
+                setFormData({
+                    name: studentData.name || "",
+                    email: studentData.email || "",
+                    age: studentData.age ?? "",
+                    city: studentData.city || "",
+                });
+            } catch (requestError) {
+                if (cancelled) {
+                    return;
+                }
+
+                console.error(
+                    "Student profile loading error:",
+                    requestError
+                );
+
+                setError(
+                    requestError.response?.data?.message ||
+                    "Unable to load student profile."
+                );
+            } finally {
+                if (!cancelled) {
+                    setLoading(false);
+                }
+            }
+        };
+
+        loadStudent().catch((requestError) => {
+            if (cancelled) {
+                return;
+            }
+
+            console.error(
+                "Unexpected student profile error:",
+                requestError
+            );
+
+            setError(
+                "Unable to load student profile."
+            );
+
+            setLoading(false);
+        });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [id]);
+
+    const showToast = (
+        message,
+        type = "success"
+    ) => {
         setToast({
             message,
             type,
         });
 
-        setTimeout(() => {
+        window.setTimeout(() => {
             setToast({
                 message: "",
                 type: "success",
             });
         }, 3000);
     };
-
-    const fetchStudent = async () => {
-        try {
-            const response = await api.get(`/students/${id}`);
-
-            return {
-                success: true,
-                data: response.data,
-            };
-        } catch (requestError) {
-            console.error(
-                "Student profile loading error:",
-                requestError
-            );
-
-            return {
-                success: false,
-                data: null,
-                message:
-                    requestError.response?.data?.message ||
-                    "Unable to load student profile.",
-            };
-        }
-    };
-
-    useEffect(() => {
-        let mounted = true;
-
-        const initializeStudent = async () => {
-            if (!id) {
-                if (mounted) {
-                    setError("Invalid student ID.");
-                    setLoading(false);
-                }
-                return;
-            }
-
-            const result = await fetchStudent();
-
-            if (!mounted) return;
-
-            if (result.success) {
-                setStudent(result.data);
-
-                setFormData({
-                    name: result.data.name || "",
-                    email: result.data.email || "",
-                    age: result.data.age || "",
-                    city: result.data.city || "",
-                });
-
-                setError("");
-            } else {
-                setError(result.message);
-            }
-
-            setLoading(false);
-        };
-
-        initializeStudent();
-
-        return () => {
-            mounted = false;
-        };
-    }, [id]);
 
     const handleChange = (event) => {
         const { name, value } = event.target;
@@ -128,63 +150,149 @@ const StudentProfile = () => {
     };
 
     const openEditModal = () => {
-        if (!student) return;
+        if (!student) {
+            return;
+        }
 
         setFormData({
             name: student.name || "",
             email: student.email || "",
-            age: student.age || "",
+            age: student.age ?? "",
             city: student.city || "",
         });
 
         setIsModalOpen(true);
     };
 
-    const handleUpdate = async (event) => {
-        event.preventDefault();
-
-        if (!formData.name.trim()) {
-            showToast("Student name is required.", "error");
+    const closeEditModal = () => {
+        if (saving) {
             return;
         }
 
-        if (!formData.email.trim()) {
-            showToast("Student email is required.", "error");
-            return;
+        setIsModalOpen(false);
+    };
+
+    const validateForm = () => {
+        const name = formData.name.trim();
+        const email = formData.email.trim();
+        const city = formData.city.trim();
+        const age = Number(formData.age);
+
+        if (!name) {
+            showToast(
+                "Student name is required.",
+                "error"
+            );
+
+            return false;
+        }
+
+        if (name.length < 2) {
+            showToast(
+                "Student name must contain at least 2 characters.",
+                "error"
+            );
+
+            return false;
+        }
+
+        if (!email) {
+            showToast(
+                "Student email is required.",
+                "error"
+            );
+
+            return false;
+        }
+
+        const emailPattern =
+            /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+        if (!emailPattern.test(email)) {
+            showToast(
+                "Please enter a valid email address.",
+                "error"
+            );
+
+            return false;
         }
 
         if (!formData.age) {
-            showToast("Student age is required.", "error");
+            showToast(
+                "Student age is required.",
+                "error"
+            );
+
+            return false;
+        }
+
+        if (
+            !Number.isInteger(age) ||
+            age < 1 ||
+            age > 120
+        ) {
+            showToast(
+                "Age must be between 1 and 120.",
+                "error"
+            );
+
+            return false;
+        }
+
+        if (!city) {
+            showToast(
+                "Student city is required.",
+                "error"
+            );
+
+            return false;
+        }
+
+        return true;
+    };
+
+    const handleUpdate = async (event) => {
+        event.preventDefault();
+
+        if (saving) {
             return;
         }
 
-        if (!formData.city.trim()) {
-            showToast("Student city is required.", "error");
+        if (!validateForm()) {
             return;
         }
-
-        setSaving(true);
 
         try {
-            const response = await api.put(`/students/${id}`, {
+            setSaving(true);
+
+            const studentData = {
                 name: formData.name.trim(),
                 email: formData.email.trim(),
                 age: Number(formData.age),
                 city: formData.city.trim(),
-            });
+            };
 
-            setStudent(response.data);
+            const response = await api.put(
+                `/students/${id}`,
+                studentData
+            );
+
+            const updatedStudent = response.data;
+
+            setStudent(updatedStudent);
 
             setFormData({
-                name: response.data.name || "",
-                email: response.data.email || "",
-                age: response.data.age || "",
-                city: response.data.city || "",
+                name: updatedStudent.name || "",
+                email: updatedStudent.email || "",
+                age: updatedStudent.age ?? "",
+                city: updatedStudent.city || "",
             });
 
             setIsModalOpen(false);
 
-            showToast("Student updated successfully.");
+            showToast(
+                "Student updated successfully."
+            );
         } catch (requestError) {
             console.error(
                 "Student update error:",
@@ -202,7 +310,9 @@ const StudentProfile = () => {
     };
 
     if (loading) {
-        return <Loading message="Loading student profile..." />;
+        return (
+            <Loading message="Loading student profile..." />
+        );
     }
 
     if (error || !student) {
@@ -235,7 +345,9 @@ const StudentProfile = () => {
                     <button
                         type="button"
                         className="btn btn-primary"
-                        onClick={() => navigate("/students")}
+                        onClick={() =>
+                            navigate("/students")
+                        }
                     >
                         <ArrowLeft size={18} />
                         Back to Students
@@ -245,14 +357,23 @@ const StudentProfile = () => {
         );
     }
 
-    const studentName = student.name || "Student";
-    const initial = studentName.charAt(0).toUpperCase();
+    const studentName =
+        student.name || "Student";
+
+    const initial = studentName
+        .charAt(0)
+        .toUpperCase();
 
     return (
         <>
+            {/* PAGE HEADER */}
             <div className="page-header">
                 <div>
-                    <div style={{ marginBottom: "10px" }}>
+                    <div
+                        style={{
+                            marginBottom: "10px",
+                        }}
+                    >
                         <Link
                             to="/students"
                             className="back-link"
@@ -276,7 +397,7 @@ const StudentProfile = () => {
                     </h1>
 
                     <p className="page-description">
-                        View and manage student information
+                        View and manage student information.
                     </p>
                 </div>
 
@@ -292,15 +413,17 @@ const StudentProfile = () => {
                 )}
             </div>
 
+            {/* PROFILE GRID */}
             <div
                 style={{
                     display: "grid",
                     gridTemplateColumns:
-                        "minmax(280px, 1fr) minmax(320px, 2fr)",
+                        "minmax(280px, 0.8fr) minmax(320px, 2fr)",
                     gap: "24px",
                     alignItems: "stretch",
                 }}
             >
+                {/* PROFILE CARD */}
                 <div
                     className="card"
                     style={{
@@ -310,8 +433,8 @@ const StudentProfile = () => {
                 >
                     <div
                         style={{
-                            width: "96px",
-                            height: "96px",
+                            width: "104px",
+                            height: "104px",
                             borderRadius: "50%",
                             margin: "0 auto 18px",
                             display: "flex",
@@ -320,8 +443,10 @@ const StudentProfile = () => {
                             background:
                                 "linear-gradient(135deg, #2563eb, #4f46e5)",
                             color: "#ffffff",
-                            fontSize: "34px",
+                            fontSize: "38px",
                             fontWeight: 800,
+                            boxShadow:
+                                "0 12px 30px rgba(37, 99, 235, 0.22)",
                         }}
                     >
                         {initial}
@@ -332,6 +457,7 @@ const StudentProfile = () => {
                             margin: "0 0 8px",
                             fontSize: "24px",
                             color: "#0f172a",
+                            fontWeight: 750,
                         }}
                     >
                         {studentName}
@@ -344,29 +470,80 @@ const StudentProfile = () => {
                             fontSize: "14px",
                         }}
                     >
-                        Student ID: #{student.id}
+                        Student ID #{student.id}
                     </p>
 
                     <div
                         style={{
                             marginTop: "24px",
                             paddingTop: "20px",
-                            borderTop: "1px solid #e2e8f0",
+                            borderTop:
+                                "1px solid #e2e8f0",
                         }}
                     >
                         <span className="badge badge-success">
                             Active Student
                         </span>
                     </div>
+
+                    <div
+                        style={{
+                            marginTop: "24px",
+                            padding: "14px",
+                            borderRadius: "12px",
+                            background: "#f8fafc",
+                            textAlign: "left",
+                        }}
+                    >
+                        <div
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "9px",
+                                marginBottom: "7px",
+                                color: "#2563eb",
+                            }}
+                        >
+                            <GraduationCap
+                                size={18}
+                            />
+
+                            <span
+                                style={{
+                                    fontSize: "12px",
+                                    fontWeight: 700,
+                                    color: "#64748b",
+                                }}
+                            >
+                                STUDENT
+                            </span>
+                        </div>
+
+                        <p
+                            style={{
+                                margin: 0,
+                                fontSize: "14px",
+                                fontWeight: 600,
+                                color: "#0f172a",
+                            }}
+                        >
+                            Registered student
+                        </p>
+                    </div>
                 </div>
 
+                {/* INFORMATION CARD */}
                 <div
                     className="card"
                     style={{
                         padding: "28px",
                     }}
                 >
-                    <div style={{ marginBottom: "24px" }}>
+                    <div
+                        style={{
+                            marginBottom: "24px",
+                        }}
+                    >
                         <h2
                             style={{
                                 margin: "0 0 6px",
@@ -384,7 +561,8 @@ const StudentProfile = () => {
                                 fontSize: "14px",
                             }}
                         >
-                            Basic information about this student
+                            Basic information about this
+                            student.
                         </p>
                     </div>
 
@@ -396,10 +574,12 @@ const StudentProfile = () => {
                             gap: "18px",
                         }}
                     >
+                        {/* EMAIL */}
                         <div
                             style={{
                                 padding: "18px",
-                                border: "1px solid #e2e8f0",
+                                border:
+                                    "1px solid #e2e8f0",
                                 borderRadius: "12px",
                                 background: "#f8fafc",
                             }}
@@ -407,7 +587,8 @@ const StudentProfile = () => {
                             <div
                                 style={{
                                     display: "flex",
-                                    alignItems: "center",
+                                    alignItems:
+                                        "center",
                                     gap: "10px",
                                     marginBottom: "10px",
                                     color: "#2563eb",
@@ -417,7 +598,7 @@ const StudentProfile = () => {
 
                                 <span
                                     style={{
-                                        fontSize: "13px",
+                                        fontSize: "12px",
                                         fontWeight: 700,
                                         color: "#64748b",
                                     }}
@@ -431,7 +612,8 @@ const StudentProfile = () => {
                                     fontSize: "15px",
                                     fontWeight: 600,
                                     color: "#0f172a",
-                                    wordBreak: "break-word",
+                                    wordBreak:
+                                        "break-word",
                                 }}
                             >
                                 {student.email ||
@@ -439,10 +621,12 @@ const StudentProfile = () => {
                             </div>
                         </div>
 
+                        {/* AGE */}
                         <div
                             style={{
                                 padding: "18px",
-                                border: "1px solid #e2e8f0",
+                                border:
+                                    "1px solid #e2e8f0",
                                 borderRadius: "12px",
                                 background: "#f8fafc",
                             }}
@@ -450,7 +634,8 @@ const StudentProfile = () => {
                             <div
                                 style={{
                                     display: "flex",
-                                    alignItems: "center",
+                                    alignItems:
+                                        "center",
                                     gap: "10px",
                                     marginBottom: "10px",
                                     color: "#2563eb",
@@ -460,7 +645,7 @@ const StudentProfile = () => {
 
                                 <span
                                     style={{
-                                        fontSize: "13px",
+                                        fontSize: "12px",
                                         fontWeight: 700,
                                         color: "#64748b",
                                     }}
@@ -482,10 +667,12 @@ const StudentProfile = () => {
                             </div>
                         </div>
 
+                        {/* CITY */}
                         <div
                             style={{
                                 padding: "18px",
-                                border: "1px solid #e2e8f0",
+                                border:
+                                    "1px solid #e2e8f0",
                                 borderRadius: "12px",
                                 background: "#f8fafc",
                             }}
@@ -493,7 +680,8 @@ const StudentProfile = () => {
                             <div
                                 style={{
                                     display: "flex",
-                                    alignItems: "center",
+                                    alignItems:
+                                        "center",
                                     gap: "10px",
                                     marginBottom: "10px",
                                     color: "#2563eb",
@@ -503,7 +691,7 @@ const StudentProfile = () => {
 
                                 <span
                                     style={{
-                                        fontSize: "13px",
+                                        fontSize: "12px",
                                         fontWeight: 700,
                                         color: "#64748b",
                                     }}
@@ -524,10 +712,12 @@ const StudentProfile = () => {
                             </div>
                         </div>
 
+                        {/* STUDENT ID */}
                         <div
                             style={{
                                 padding: "18px",
-                                border: "1px solid #e2e8f0",
+                                border:
+                                    "1px solid #e2e8f0",
                                 borderRadius: "12px",
                                 background: "#f8fafc",
                             }}
@@ -535,17 +725,18 @@ const StudentProfile = () => {
                             <div
                                 style={{
                                     display: "flex",
-                                    alignItems: "center",
+                                    alignItems:
+                                        "center",
                                     gap: "10px",
                                     marginBottom: "10px",
                                     color: "#2563eb",
                                 }}
                             >
-                                <Calendar size={18} />
+                                <Hash size={18} />
 
                                 <span
                                     style={{
-                                        fontSize: "13px",
+                                        fontSize: "12px",
                                         fontWeight: 700,
                                         color: "#64748b",
                                     }}
@@ -564,28 +755,74 @@ const StudentProfile = () => {
                                 #{student.id}
                             </div>
                         </div>
+
+                        {/* NAME */}
+                        <div
+                            style={{
+                                padding: "18px",
+                                border:
+                                    "1px solid #e2e8f0",
+                                borderRadius: "12px",
+                                background: "#f8fafc",
+                                gridColumn:
+                                    "1 / -1",
+                            }}
+                        >
+                            <div
+                                style={{
+                                    display: "flex",
+                                    alignItems:
+                                        "center",
+                                    gap: "10px",
+                                    marginBottom: "10px",
+                                    color: "#2563eb",
+                                }}
+                            >
+                                <User size={18} />
+
+                                <span
+                                    style={{
+                                        fontSize: "12px",
+                                        fontWeight: 700,
+                                        color: "#64748b",
+                                    }}
+                                >
+                                    FULL NAME
+                                </span>
+                            </div>
+
+                            <div
+                                style={{
+                                    fontSize: "15px",
+                                    fontWeight: 600,
+                                    color: "#0f172a",
+                                }}
+                            >
+                                {studentName}
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
 
+            {/* EDIT MODAL */}
             <Modal
                 isOpen={isModalOpen}
-                onClose={() => {
-                    if (!saving) {
-                        setIsModalOpen(false);
-                    }
-                }}
+                onClose={closeEditModal}
                 title="Edit Student"
                 size="medium"
             >
                 <form onSubmit={handleUpdate}>
                     <div className="form-group">
-                        <label htmlFor="name">
+                        <label
+                            htmlFor="student-profile-name"
+                            className="form-label"
+                        >
                             Full Name
                         </label>
 
                         <input
-                            id="name"
+                            id="student-profile-name"
                             name="name"
                             type="text"
                             value={formData.name}
@@ -593,16 +830,20 @@ const StudentProfile = () => {
                             placeholder="Enter student name"
                             className="form-input"
                             disabled={saving}
+                            autoComplete="name"
                         />
                     </div>
 
                     <div className="form-group">
-                        <label htmlFor="email">
+                        <label
+                            htmlFor="student-profile-email"
+                            className="form-label"
+                        >
                             Email
                         </label>
 
                         <input
-                            id="email"
+                            id="student-profile-email"
                             name="email"
                             type="email"
                             value={formData.email}
@@ -610,20 +851,25 @@ const StudentProfile = () => {
                             placeholder="Enter email address"
                             className="form-input"
                             disabled={saving}
+                            autoComplete="email"
                         />
                     </div>
 
                     <div className="form-row">
                         <div className="form-group">
-                            <label htmlFor="age">
+                            <label
+                                htmlFor="student-profile-age"
+                                className="form-label"
+                            >
                                 Age
                             </label>
 
                             <input
-                                id="age"
+                                id="student-profile-age"
                                 name="age"
                                 type="number"
                                 min="1"
+                                max="120"
                                 value={formData.age}
                                 onChange={handleChange}
                                 placeholder="Enter age"
@@ -633,12 +879,15 @@ const StudentProfile = () => {
                         </div>
 
                         <div className="form-group">
-                            <label htmlFor="city">
+                            <label
+                                htmlFor="student-profile-city"
+                                className="form-label"
+                            >
                                 City
                             </label>
 
                             <input
-                                id="city"
+                                id="student-profile-city"
                                 name="city"
                                 type="text"
                                 value={formData.city}
@@ -654,9 +903,7 @@ const StudentProfile = () => {
                         <button
                             type="button"
                             className="btn btn-secondary"
-                            onClick={() =>
-                                setIsModalOpen(false)
-                            }
+                            onClick={closeEditModal}
                             disabled={saving}
                         >
                             Cancel
@@ -675,16 +922,19 @@ const StudentProfile = () => {
                 </form>
             </Modal>
 
-            <Toast
-                message={toast.message}
-                type={toast.type}
-                onClose={() =>
-                    setToast({
-                        message: "",
-                        type: "success",
-                    })
-                }
-            />
+            {/* TOAST */}
+            <div className="toast-container">
+                <Toast
+                    message={toast.message}
+                    type={toast.type}
+                    onClose={() =>
+                        setToast({
+                            message: "",
+                            type: "success",
+                        })
+                    }
+                />
+            </div>
         </>
     );
 };

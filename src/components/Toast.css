@@ -1,0 +1,126 @@
+
+.toast-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(3px);
+    animation: toastFadeIn 0.2s ease;
+}
+
+.toast {
+    position: relative;
+    width: 100%;
+    max-width: 360px;
+    padding: 32px 24px;
+    border-radius: 16px;
+    background: #ffffff;
+    text-align: center;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+    animation: toastScaleIn 0.25s ease;
+}
+
+.toast-success {
+    border: 1px solid #bbf7d0;
+}
+
+.toast-error {
+    border: 1px solid #fecaca;
+}
+
+.toast-warning {
+    border: 1px solid #fde68a;
+}
+
+.toast-info {
+    border: 1px solid #bfdbfe;
+}
+
+.toast-icon {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 14px;
+}
+
+.toast-success .toast-icon {
+    color: #16a34a;
+}
+
+.toast-error .toast-icon {
+    color: #dc2626;
+}
+
+.toast-warning .toast-icon {
+    color: #d97706;
+}
+
+.toast-info .toast-icon {
+    color: #2563eb;
+}
+
+.toast-title {
+    margin: 0 0 10px;
+    color: #1f2937;
+    font-size: 22px;
+    font-weight: 700;
+}
+
+.toast-message {
+    margin: 0;
+    color: #4b5563;
+    font-size: 15px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.toast-close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: #6b7280;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.toast-close:hover {
+    background: #f3f4f6;
+}
+
+@keyframes toastFadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes toastScaleIn {
+    from {
+        opacity: 0;
+        transform: scale(0.85);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@media (max-width: 480px) {
+    .toast {
+        max-width: 320px;
+        padding: 28px 18px;
+    }
+}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
     Edit,
     Eye,
@@ -6,6 +6,13 @@ import {
     Search,
     Trash2,
     Users,
+    UserPlus,
+    MapPin,
+    Mail,
+    Calendar,
+    Phone,
+    UserRound,
+    X,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 
@@ -16,6 +23,15 @@ import Modal from "../components/Modal";
 import Loading from "../components/Loading";
 import Toast from "../components/Toast";
 
+const EMPTY_FORM = {
+    name: "",
+    email: "",
+    phone: "",
+    gender: "",
+    age: "",
+    city: "",
+};
+
 const Students = () => {
     const { isAdmin } = useAuth();
 
@@ -24,18 +40,16 @@ const Students = () => {
 
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [deleting, setDeleting] = useState(false);
 
     const [error, setError] = useState("");
 
     const [isModalOpen, setIsModalOpen] = useState(false);
-
+    const [deleteStudent, setDeleteStudent] = useState(null);
     const [editingStudent, setEditingStudent] = useState(null);
 
     const [formData, setFormData] = useState({
-        name: "",
-        email: "",
-        age: "",
-        city: "",
+        ...EMPTY_FORM,
     });
 
     const [toast, setToast] = useState({
@@ -44,12 +58,15 @@ const Students = () => {
     });
 
     useEffect(() => {
-        const loadInitialStudents = async () => {
-            try {
-                setLoading(true);
-                setError("");
+        let cancelled = false;
 
+        const fetchStudents = async () => {
+            try {
                 const response = await api.get("/students");
+
+                if (cancelled) {
+                    return;
+                }
 
                 setStudents(
                     Array.isArray(response.data)
@@ -57,32 +74,41 @@ const Students = () => {
                         : []
                 );
             } catch (err) {
-                console.error(
-                    "Students API error:",
-                    err
-                );
+                if (cancelled) {
+                    return;
+                }
+
+                console.error("Students API error:", err);
 
                 setError(
                     err.response?.data?.message ||
                     "Failed to load students."
                 );
             } finally {
-                setLoading(false);
+                if (!cancelled) {
+                    setLoading(false);
+                }
             }
         };
 
-        loadInitialStudents().catch((err) => {
+        fetchStudents().catch((err) => {
             console.error(
-                "Unexpected students error:",
+                "Unexpected students loading error:",
                 err
             );
 
-            setLoading(false);
-            setError("Failed to load students.");
+            if (!cancelled) {
+                setError("Failed to load students.");
+                setLoading(false);
+            }
         });
+
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
-    const loadStudents = async () => {
+    const refreshStudents = async () => {
         try {
             setLoading(true);
             setError("");
@@ -96,7 +122,7 @@ const Students = () => {
             );
         } catch (err) {
             console.error(
-                "Students API error:",
+                "Students refresh error:",
                 err
             );
 
@@ -109,27 +135,27 @@ const Students = () => {
         }
     };
 
-    const showToast = (
-        message,
-        type = "success"
-    ) => {
+    const showToast = (message, type = "success") => {
         setToast({
             message,
             type,
         });
-
-        window.setTimeout(() => {
-            setToast({
-                message: "",
-                type: "success",
-            });
-        }, 3000);
     };
 
-    const filteredStudents = students.filter(
-        (student) => {
-            const text = search.toLowerCase();
+    const closeToast = useCallback(() => {
+        setToast({
+            message: "",
+            type: "success",
+        });
+    }, []);
+    const filteredStudents = useMemo(() => {
+        const text = search.trim().toLowerCase();
 
+        if (!text) {
+            return students;
+        }
+
+        return students.filter((student) => {
             return (
                 String(student.id || "")
                     .toLowerCase()
@@ -140,21 +166,27 @@ const Students = () => {
                 String(student.email || "")
                     .toLowerCase()
                     .includes(text) ||
+                String(student.phone || "")
+                    .toLowerCase()
+                    .includes(text) ||
+                String(student.gender || "")
+                    .toLowerCase()
+                    .includes(text) ||
                 String(student.city || "")
+                    .toLowerCase()
+                    .includes(text) ||
+                String(student.age || "")
                     .toLowerCase()
                     .includes(text)
             );
-        }
-    );
+        });
+    }, [students, search]);
 
     const openAddModal = () => {
         setEditingStudent(null);
 
         setFormData({
-            name: "",
-            email: "",
-            age: "",
-            city: "",
+            ...EMPTY_FORM,
         });
 
         setIsModalOpen(true);
@@ -166,6 +198,8 @@ const Students = () => {
         setFormData({
             name: student.name || "",
             email: student.email || "",
+            phone: student.phone || "",
+            gender: student.gender || "",
             age: student.age ?? "",
             city: student.city || "",
         });
@@ -180,6 +214,10 @@ const Students = () => {
 
         setIsModalOpen(false);
         setEditingStudent(null);
+
+        setFormData({
+            ...EMPTY_FORM,
+        });
     };
 
     const handleChange = (event) => {
@@ -191,22 +229,114 @@ const Students = () => {
         }));
     };
 
-    const handleSubmit = async (event) => {
-        event.preventDefault();
+    const validateForm = () => {
+        const name = formData.name.trim();
+        const email = formData.email.trim();
+        const phone = formData.phone.trim();
+        const gender = formData.gender.trim();
+        const city = formData.city.trim();
+        const age = Number(formData.age);
 
-        if (!formData.name.trim()) {
+        if (!name) {
             showToast(
                 "Student name is required.",
                 "error"
             );
-            return;
+            return false;
         }
 
-        if (!formData.email.trim()) {
+        if (name.length < 2) {
+            showToast(
+                "Student name must contain at least 2 characters.",
+                "error"
+            );
+            return false;
+        }
+
+        if (!email) {
             showToast(
                 "Student email is required.",
                 "error"
             );
+            return false;
+        }
+
+        const emailPattern =
+            /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+        if (!emailPattern.test(email)) {
+            showToast(
+                "Please enter a valid email address.",
+                "error"
+            );
+            return false;
+        }
+
+        if (!phone) {
+            showToast(
+                "Phone number is required.",
+                "error"
+            );
+            return false;
+        }
+
+        const phonePattern = /^[0-9]{10}$/;
+
+        if (!phonePattern.test(phone)) {
+            showToast(
+                "Phone number must contain exactly 10 digits.",
+                "error"
+            );
+            return false;
+        }
+
+        if (!gender) {
+            showToast(
+                "Please select gender.",
+                "error"
+            );
+            return false;
+        }
+
+        if (!formData.age) {
+            showToast(
+                "Student age is required.",
+                "error"
+            );
+            return false;
+        }
+
+        if (
+            !Number.isInteger(age) ||
+            age < 1 ||
+            age > 120
+        ) {
+            showToast(
+                "Age must be between 1 and 120.",
+                "error"
+            );
+            return false;
+        }
+
+        if (!city) {
+            showToast(
+                "Student city is required.",
+                "error"
+            );
+            return false;
+        }
+
+        return true;
+    };
+
+    const handleSubmit = async (event) => {
+        event.preventDefault();
+
+        if (saving) {
+            return;
+        }
+
+        if (!validateForm()) {
             return;
         }
 
@@ -216,6 +346,8 @@ const Students = () => {
             const studentData = {
                 name: formData.name.trim(),
                 email: formData.email.trim(),
+                phone: formData.phone.trim(),
+                gender: formData.gender.trim(),
                 age: Number(formData.age),
                 city: formData.city.trim(),
             };
@@ -243,7 +375,11 @@ const Students = () => {
             setIsModalOpen(false);
             setEditingStudent(null);
 
-            await loadStudents();
+            setFormData({
+                ...EMPTY_FORM,
+            });
+
+            await refreshStudents();
         } catch (err) {
             console.error(
                 "Student save error:",
@@ -260,25 +396,37 @@ const Students = () => {
         }
     };
 
-    const handleDelete = async (student) => {
-        const confirmed = window.confirm(
-            `Are you sure you want to delete "${student.name}"?`
-        );
+    const openDeleteModal = (student) => {
+        setDeleteStudent(student);
+    };
 
-        if (!confirmed) {
+    const closeDeleteModal = () => {
+        if (deleting) {
+            return;
+        }
+
+        setDeleteStudent(null);
+    };
+
+    const handleDelete = async () => {
+        if (!deleteStudent || deleting) {
             return;
         }
 
         try {
+            setDeleting(true);
+
             await api.delete(
-                `/students/${student.id}`
+                `/students/${deleteStudent.id}`
             );
 
             showToast(
                 "Student deleted successfully."
             );
 
-            await loadStudents();
+            setDeleteStudent(null);
+
+            await refreshStudents();
         } catch (err) {
             console.error(
                 "Student delete error:",
@@ -290,7 +438,13 @@ const Students = () => {
                 "Failed to delete student.",
                 "error"
             );
+        } finally {
+            setDeleting(false);
         }
+    };
+
+    const clearSearch = () => {
+        setSearch("");
     };
 
     if (loading) {
@@ -303,13 +457,37 @@ const Students = () => {
         <>
             <div className="page-header">
                 <div>
-                    <h2 className="page-title">
-                        Students
-                    </h2>
+                    <div
+                        style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "10px",
+                            marginBottom: "5px",
+                        }}
+                    >
+                        <div
+                            style={{
+                                width: "38px",
+                                height: "38px",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                borderRadius: "10px",
+                                background: "#eff6ff",
+                                color: "#2563eb",
+                            }}
+                        >
+                            <Users size={20} />
+                        </div>
+
+                        <h2 className="page-title">
+                            Students
+                        </h2>
+                    </div>
 
                     <p className="page-description">
-                        Manage and view student
-                        information.
+                        Manage student information,
+                        profiles and records.
                     </p>
                 </div>
 
@@ -333,7 +511,7 @@ const Students = () => {
                         type="button"
                         className="btn btn-sm"
                         onClick={() => {
-                            loadStudents().catch(
+                            refreshStudents().catch(
                                 (err) => {
                                     console.error(
                                         "Retry error:",
@@ -348,27 +526,35 @@ const Students = () => {
                 </div>
             )}
 
-            <div className="card">
+            <div className="card students-card">
                 <div className="table-toolbar">
                     <div>
                         <h3 className="card-title">
-                            Student List
+                            Student Directory
                         </h3>
 
                         <p className="card-subtitle">
-                            {students.length}{" "}
-                            {students.length === 1
-                                ? "student"
-                                : "students"}
+                            {search
+                                ? `${filteredStudents.length} of ${students.length} students`
+                                : `${students.length} ${
+                                    students.length === 1
+                                        ? "student"
+                                        : "students"
+                                } registered`}
                         </p>
                     </div>
 
-                    <div className="search-box">
+                    <div
+                        className="search-box"
+                        style={{
+                            position: "relative",
+                        }}
+                    >
                         <Search size={18} />
 
                         <input
                             type="text"
-                            placeholder="Search students..."
+                            placeholder="Search name, email, city..."
                             value={search}
                             onChange={(event) =>
                                 setSearch(
@@ -376,13 +562,40 @@ const Students = () => {
                                 )
                             }
                         />
+
+                        {search && (
+                            <button
+                                type="button"
+                                onClick={clearSearch}
+                                aria-label="Clear search"
+                                style={{
+                                    border: "none",
+                                    background:
+                                        "transparent",
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    alignItems:
+                                        "center",
+                                    justifyContent:
+                                        "center",
+                                    padding: "2px",
+                                    color: "#94a3b8",
+                                }}
+                            >
+                                <X size={16} />
+                            </button>
+                        )}
                     </div>
                 </div>
 
                 {filteredStudents.length === 0 ? (
                     <div className="empty-state">
                         <div className="empty-icon">
-                            <Users size={28} />
+                            {search ? (
+                                <Search size={28} />
+                            ) : (
+                                <Users size={28} />
+                            )}
                         </div>
 
                         <h3>
@@ -393,9 +606,25 @@ const Students = () => {
 
                         <p>
                             {search
-                                ? "Try changing your search."
+                                ? "Try a different name, email or city."
                                 : "Add your first student to get started."}
                         </p>
+
+                        {!search && isAdmin && (
+                            <button
+                                type="button"
+                                className="btn btn-primary"
+                                onClick={
+                                    openAddModal
+                                }
+                                style={{
+                                    marginTop: "14px",
+                                }}
+                            >
+                                <UserPlus size={17} />
+                                Add First Student
+                            </button>
+                        )}
                     </div>
                 ) : (
                     <div className="table-wrapper">
@@ -405,14 +634,11 @@ const Students = () => {
                                 <th>ID</th>
                                 <th>Student</th>
                                 <th>Email</th>
+                                <th>Phone</th>
+                                <th>Gender</th>
                                 <th>Age</th>
                                 <th>City</th>
-
-                                {isAdmin && (
-                                    <th>
-                                        Actions
-                                    </th>
-                                )}
+                                <th>Actions</th>
                             </tr>
                             </thead>
 
@@ -436,90 +662,203 @@ const Students = () => {
                                         <td>
                                             <div className="table-user">
                                                 <div className="avatar avatar-blue">
-                                                    {student.name
-                                                        ?.charAt(
+                                                    {(
+                                                        student.name ||
+                                                        "U"
+                                                    )
+                                                        .charAt(
                                                             0
                                                         )
                                                         .toUpperCase()}
                                                 </div>
 
-                                                <strong>
-                                                    {
-                                                        student.name
-                                                    }
-                                                </strong>
+                                                <div
+                                                    style={{
+                                                        minWidth:
+                                                            0,
+                                                    }}
+                                                >
+                                                    <strong>
+                                                        {
+                                                            student.name
+                                                        }
+                                                    </strong>
+                                                </div>
                                             </div>
                                         </td>
 
                                         <td>
-                                            {
-                                                student.email
-                                            }
+                                            <div
+                                                style={{
+                                                    display:
+                                                        "flex",
+                                                    alignItems:
+                                                        "center",
+                                                    gap: "7px",
+                                                    minWidth:
+                                                        0,
+                                                }}
+                                            >
+                                                <Mail
+                                                    size={
+                                                        14
+                                                    }
+                                                    style={{
+                                                        color: "#94a3b8",
+                                                        flexShrink: 0,
+                                                    }}
+                                                />
+
+                                                <span
+                                                    style={{
+                                                        overflow:
+                                                            "hidden",
+                                                        textOverflow:
+                                                            "ellipsis",
+                                                        whiteSpace:
+                                                            "nowrap",
+                                                    }}
+                                                >
+                                                        {
+                                                            student.email
+                                                        }
+                                                    </span>
+                                            </div>
                                         </td>
 
                                         <td>
-                                            {
-                                                student.age
-                                            }
+                                            <div
+                                                style={{
+                                                    display:
+                                                        "flex",
+                                                    alignItems:
+                                                        "center",
+                                                    gap: "6px",
+                                                }}
+                                            >
+                                                <Phone
+                                                    size={
+                                                        14
+                                                    }
+                                                    style={{
+                                                        color: "#94a3b8",
+                                                    }}
+                                                />
+                                                {
+                                                    student.phone
+                                                }
+                                            </div>
                                         </td>
 
                                         <td>
-                                            {
-                                                student.city
-                                            }
+                                                <span className="badge badge-blue">
+                                                    {
+                                                        student.gender
+                                                    }
+                                                </span>
                                         </td>
 
-                                        {isAdmin && (
-                                            <td>
-                                                <div className="table-actions">
-                                                    <Link
-                                                        to={`/students/${student.id}`}
-                                                        className="btn btn-icon"
-                                                        title="View profile"
-                                                    >
-                                                        <Eye
-                                                            size={
-                                                                17
-                                                            }
-                                                        />
-                                                    </Link>
+                                        <td>
+                                            <div
+                                                style={{
+                                                    display:
+                                                        "flex",
+                                                    alignItems:
+                                                        "center",
+                                                    gap: "6px",
+                                                }}
+                                            >
+                                                <Calendar
+                                                    size={
+                                                        14
+                                                    }
+                                                    style={{
+                                                        color: "#94a3b8",
+                                                    }}
+                                                />
+                                                {
+                                                    student.age
+                                                }
+                                            </div>
+                                        </td>
 
-                                                    <button
-                                                        type="button"
-                                                        className="btn btn-icon btn-edit"
-                                                        title="Edit student"
-                                                        onClick={() =>
-                                                            openEditModal(
-                                                                student
-                                                            )
-                                                        }
-                                                    >
-                                                        <Edit
-                                                            size={
-                                                                17
-                                                            }
-                                                        />
-                                                    </button>
+                                        <td>
+                                            <div
+                                                style={{
+                                                    display:
+                                                        "flex",
+                                                    alignItems:
+                                                        "center",
+                                                    gap: "6px",
+                                                }}
+                                            >
+                                                <MapPin
+                                                    size={
+                                                        14
+                                                    }
+                                                    style={{
+                                                        color: "#94a3b8",
+                                                    }}
+                                                />
+                                                {
+                                                    student.city
+                                                }
+                                            </div>
+                                        </td>
 
-                                                    <button
-                                                        type="button"
-                                                        className="btn btn-icon btn-danger"
-                                                        title="Delete student"
-                                                        onClick={() =>
-                                                            handleDelete(
-                                                                student
-                                                            )
+                                        <td>
+                                            <div className="table-actions">
+                                                <Link
+                                                    to={`/students/${student.id}`}
+                                                    className="btn btn-icon"
+                                                    title="View profile"
+                                                >
+                                                    <Eye
+                                                        size={
+                                                            17
                                                         }
-                                                    >
-                                                        <Trash2
-                                                            size={
-                                                                17
+                                                    />
+                                                </Link>
+
+                                                {isAdmin && (
+                                                    <>
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn-icon btn-edit"
+                                                            title="Edit student"
+                                                            onClick={() =>
+                                                                openEditModal(
+                                                                    student
+                                                                )
                                                             }
-                                                        />
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        )}
+                                                        >
+                                                            <Edit
+                                                                size={
+                                                                    17
+                                                                }
+                                                            />
+                                                        </button>
+
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn-icon btn-danger"
+                                                            title="Delete student"
+                                                            onClick={() =>
+                                                                openDeleteModal(
+                                                                    student
+                                                                )
+                                                            }
+                                                        >
+                                                            <Trash2
+                                                                size={
+                                                                    17
+                                                                }
+                                                            />
+                                                        </button>
+                                                    </>
+                                                )}
+                                            </div>
+                                        </td>
                                     </tr>
                                 )
                             )}
@@ -529,6 +868,7 @@ const Students = () => {
                 )}
             </div>
 
+            {/* ADD / EDIT MODAL */}
             <Modal
                 isOpen={isModalOpen}
                 onClose={closeModal}
@@ -537,6 +877,7 @@ const Students = () => {
                         ? "Edit Student"
                         : "Add New Student"
                 }
+                size="medium"
             >
                 <form onSubmit={handleSubmit}>
                     <div className="form-group">
@@ -552,9 +893,11 @@ const Students = () => {
                             type="text"
                             name="name"
                             className="form-input"
+                            placeholder="Enter student name"
                             value={formData.name}
                             onChange={handleChange}
                             disabled={saving}
+                            autoComplete="name"
                         />
                     </div>
 
@@ -571,10 +914,96 @@ const Students = () => {
                             type="email"
                             name="email"
                             className="form-input"
+                            placeholder="student@example.com"
                             value={formData.email}
                             onChange={handleChange}
                             disabled={saving}
+                            autoComplete="email"
                         />
+                    </div>
+
+                    <div className="form-row">
+                        <div className="form-group">
+                            <label
+                                htmlFor="student-phone"
+                                className="form-label"
+                            >
+                                Phone Number
+                            </label>
+
+                            <input
+                                id="student-phone"
+                                type="tel"
+                                name="phone"
+                                className="form-input"
+                                placeholder="10 digit phone number"
+                                value={formData.phone}
+                                onChange={handleChange}
+                                disabled={saving}
+                                maxLength={10}
+                                inputMode="numeric"
+                            />
+                        </div>
+
+                        <div className="form-group">
+                            <label
+                                htmlFor="student-gender"
+                                className="form-label"
+                            >
+                                Gender
+                            </label>
+
+                            <div
+                                style={{
+                                    position: "relative",
+                                }}
+                            >
+                                <UserRound
+                                    size={17}
+                                    style={{
+                                        position:
+                                            "absolute",
+                                        left: "12px",
+                                        top: "50%",
+                                        transform:
+                                            "translateY(-50%)",
+                                        color: "#94a3b8",
+                                        pointerEvents:
+                                            "none",
+                                    }}
+                                />
+
+                                <select
+                                    id="student-gender"
+                                    name="gender"
+                                    className="form-input"
+                                    value={
+                                        formData.gender
+                                    }
+                                    onChange={
+                                        handleChange
+                                    }
+                                    disabled={saving}
+                                    style={{
+                                        paddingLeft:
+                                            "38px",
+                                    }}
+                                >
+                                    <option value="">
+                                        Select gender
+                                    </option>
+                                    <option value="MALE">
+                                        Male
+                                    </option>
+                                    <option value="FEMALE">
+                                        Female
+                                    </option>
+                                    <option value="OTHER">
+                                        Other
+                                    </option>
+                                </select>
+                            </div>
+                        </div>
                     </div>
 
                     <div className="form-row">
@@ -591,6 +1020,9 @@ const Students = () => {
                                 type="number"
                                 name="age"
                                 className="form-input"
+                                placeholder="Age"
+                                min="1"
+                                max="120"
                                 value={formData.age}
                                 onChange={handleChange}
                                 disabled={saving}
@@ -610,6 +1042,7 @@ const Students = () => {
                                 type="text"
                                 name="city"
                                 className="form-input"
+                                placeholder="City"
                                 value={formData.city}
                                 onChange={handleChange}
                                 disabled={saving}
@@ -642,16 +1075,106 @@ const Students = () => {
                 </form>
             </Modal>
 
+            {/* DELETE MODAL */}
+            <Modal
+                isOpen={Boolean(deleteStudent)}
+                onClose={closeDeleteModal}
+                title="Delete Student"
+                size="small"
+            >
+                {deleteStudent && (
+                    <div>
+                        <div
+                            style={{
+                                width: "54px",
+                                height: "54px",
+                                display: "flex",
+                                alignItems:
+                                    "center",
+                                justifyContent:
+                                    "center",
+                                margin: "0 auto 16px",
+                                borderRadius: "50%",
+                                background: "#fef2f2",
+                                color: "#dc2626",
+                            }}
+                        >
+                            <Trash2 size={25} />
+                        </div>
+
+                        <div
+                            style={{
+                                textAlign: "center",
+                            }}
+                        >
+                            <h3
+                                style={{
+                                    margin: "0 0 8px",
+                                    fontSize: "17px",
+                                    color: "#111827",
+                                }}
+                            >
+                                Delete this student?
+                            </h3>
+
+                            <p
+                                style={{
+                                    margin: "0 auto",
+                                    maxWidth: "340px",
+                                    color: "#64748b",
+                                    fontSize: "13px",
+                                    lineHeight: 1.6,
+                                }}
+                            >
+                                You are about to delete{" "}
+                                <strong
+                                    style={{
+                                        color: "#334155",
+                                    }}
+                                >
+                                    {deleteStudent.name}
+                                </strong>
+                                . This action cannot
+                                be undone.
+                            </p>
+                        </div>
+
+                        <div className="modal-footer">
+                            <button
+                                type="button"
+                                className="btn btn-secondary"
+                                onClick={
+                                    closeDeleteModal
+                                }
+                                disabled={deleting}
+                            >
+                                Cancel
+                            </button>
+
+                            <button
+                                type="button"
+                                className="btn btn-danger"
+                                onClick={handleDelete}
+                                disabled={deleting}
+                            >
+                                <Trash2 size={16} />
+
+                                {deleting
+                                    ? "Deleting..."
+                                    : "Delete Student"}
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </Modal>
+
+            {/* TOAST */}
             <div className="toast-container">
+                {/* CENTERED SUCCESS / ERROR POPUP */}
                 <Toast
                     message={toast.message}
                     type={toast.type}
-                    onClose={() =>
-                        setToast({
-                            message: "",
-                            type: "success",
-                        })
-                    }
+                    onClose={closeToast}
                 />
             </div>
         </>
